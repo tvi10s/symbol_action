@@ -1,5 +1,5 @@
 #!/bin/bash
-
+set -x
 GITHUB_USER="updater-bot"
 GITHUB_USER_EMAIL="updater-bot@fastmail.us"
 
@@ -254,7 +254,7 @@ then
 
     # download inspect tool
     set -e
-    aws s3 cp "${S3_BUCKET_INSPECT}/inspect-github-${ENVIRONMENT}" ./inspect --no-progress && chmod +x ./inspect
+    aws s3 cp "${S3_BUCKET_INSPECT}/inspect-github-${ENVIRONMENT}" ./inspect && chmod +x ./inspect
     inspect_version=$(./inspect version)
     echo "inspect info: ${inspect_version}"
     set +e
@@ -333,7 +333,7 @@ then
 
         # if symbol info is valid, the file will be replaced by normalized version
         # don't stop the script execution when normalization fails: pass wrong data to merge request to see problems there
-        if ./inspect symfile normalize --groups="symbols/${GROUP}"
+        if ./inspect symfile normalize --groups="symbols/${GROUP}" $INSPECT_ARGS
         then
 
             if [ ${CONVERT} == 1 ]
