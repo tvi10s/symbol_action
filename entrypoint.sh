@@ -1,7 +1,7 @@
 #!/bin/bash
-
-GITHUB_USER="updater-bot"
-GITHUB_USER_EMAIL="updater-bot@fastmail.us"
+set -x
+GITHUB_USER="ibot7"
+GITHUB_USER_EMAIL="ibot7@fastmail.us"
 
 # check command
 if [[ -z "$(echo 'UPLOAD VALIDATE CHECK' | grep -w "$CMD")" ]]
