@@ -10,11 +10,13 @@ then
     exit 1
 fi
 
-echo ${GITHUB_TOKEN} | gh auth login --with-token > /dev/null 2>&1
-if [ -z $? ]
-then
-    echo "Authorizaton error, update GITHUB_TOKEN"
-    exit 1
+if [ ${CMD} != 'UPLOAD' ]; then
+    # we don't login in UPLOAD CMD because we don't use GH API in this CMD
+    echo ${GITHUB_TOKEN} | gh auth login --with-token > /dev/null 2>&1
+    if [ -z $? ]; then
+        echo "Authorization error, update GITHUB_TOKEN"
+        exit 1
+    fi
 fi
 
 git config user.name $GITHUB_USER
@@ -30,7 +32,7 @@ function cleanup {
 }
 
 function arr2str {
-    # join array to string with delimeter
+    # join array to string with decimeter
     # example:
     # arr=(1 2 3)
     # arr2str , ${arr[@]} => 1,2,3
@@ -232,7 +234,7 @@ then
     for GROUP in "${GROUP_NAMES[@]}"
     do
         echo "requesting symbol info for ${GROUP}"
-        GROUP=${GROUP%:*}   # remove kinds from groupname
+        GROUP=${GROUP%:*}   # remove kinds from group name
         FILE=${GROUP}.json
 
         if ! curl -s ${RETRY_PARAMS} "${REST_URL}/symbol_info?group=${GROUP}" -H "${AUTHORIZATION}" > "symbols/${FILE}"
@@ -282,12 +284,12 @@ then
 
             if [ ${CONVERT} == 1 ]
             then
-                echo "converting currenciies into ${GROUP}"
+                echo "converting currencies into ${GROUP}"
                 python3 "${1}/map.py" currencies.json "symbols/${FILE}"
                 echo "currencies in file ${FILE} are converted"
             fi
         else
-            # remove "s" field from file in case when inspect didn't normalizate the file
+            # remove "s" field from file in case when inspect didn't normalize the file
             # IMPORTANT: don't use `jq` as it can convert some values (for example incorrect int 1.0 to correct 1) ###  jq 'del(.s)' "symbols/${FILE}" > temp.json && mv temp.json "symbols/${FILE}"
             sed -i 's\"s": *"ok" *,\\' symbols/${FILE}
         fi
@@ -313,7 +315,7 @@ then
 
     if [ "${PUSH_RES}" != "0" ]
     then
-        echo "error on commiting and pushing changes, code ${PUSH_RES}"
+        echo "error on committing and pushing changes, code ${PUSH_RES}"
         exit 1
     fi
 
