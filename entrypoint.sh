@@ -21,9 +21,13 @@ fi
 
 # make necessary auth stuff for 'CHECK' and 'VALIDATE' commands
 if [ "${CMD}" != 'UPLOAD' ]; then
-    # check if GITHUB_TOKEN is set
+    # check if GITHUB_TOKEN and GITHUB_TOKEN are set
     if [[ -z "${GITHUB_TOKEN}" ]]; then
         echo "ERROR: GITHUB_TOKEN is not set"
+        exit 1
+    fi
+    if [[ -z "${GITHUB_TOKEN_STAGING}" ]]; then
+        echo "ERROR: GITHUB_TOKEN_STAGING is not set"
         exit 1
     fi
     if [[ "${ENVIRONMENT}" == "staging" ]]; then
@@ -147,12 +151,12 @@ if [ ${CMD} == 'VALIDATE' ]; then
     # save old versions
     git checkout -b old origin/$ENVIRONMENT
     for F in "${MODIFIED[@]}"; do cp "$F" "$F.old"; done
+    git checkout $GITHUB_HEAD_REF
 
     # download inspect tool
     get_inspect
 
     # check files
-    FAILED=false
 
     arraylength=${#MODIFIED[@]}
     for ((i = 0; i < ${arraylength}; i++)); do
@@ -163,13 +167,33 @@ if [ ${CMD} == 'VALIDATE' ]; then
     echo "Checking ${MODIFIED_STR} groups"
     ./inspect symfile --groups="${MODIFIED_STR}" --log-file=stdout --report-file=full_report.txt --report-format=github $INSPECT_ARGS
     ./inspect symfile diff --groups="${MODIFIED_STR}" --log-file=stdout $INSPECT_ARGS
-    RESULT=$(grep -c FAIL full_report.txt)
-    [ "$RESULT" -ne 0 ] && FAILED=true
 
     FULL_REPORT=$(cat full_report.txt)
+    gh pr review $PR_NUMBER -c -b "$FULL_REPORT"
 
-    [ $FAILED = "true" ] && gh pr review $PR_NUMBER -c -b "$FULL_REPORT" && echo some tests have failed && exit 1
-    [ $FAILED = "false" ] && gh pr review $PR_NUMBER -c -b "$FULL_REPORT"
+    GROUP_ERR_VALIDATION_STR=$(grep FAIL full_report.txt | cut -f3 -d'*' | uniq)
+    readarray -t GROUP_ERR_VALIDATION <<< $GROUP_ERR_VALIDATION_STR
+    for err_group in ${GROUP_ERR_VALIDATION[@]}; do
+        mv symbols/$err_group.json.old symbols/$err_group.json # restore previous file version for failed groups
+    done
+
+    err_group_changed=$(git status --porcelain | grep -c ".json$")
+    if [[ $err_group_changed -gt 0 ]]; then
+        # we restored groups with issue, so we need to push them to branch
+        # before push we need to check changes between source and target branch
+         git add '*.json'
+        git commit -m "automatic restore old version for groups with issues: $(arr2str , ${GROUP_ERR_VALIDATION[@]})"
+        git push
+        MODIFIED=($(git diff --name-only origin/$ENVIRONMENT | grep ".json$"))
+        if [[ -z "$MODIFIED" ]]; then
+            echo "No symbol info files were modified after restoring groups with issues from 'origin/${ENVIRONMENT}' branch"
+            gh pr review $PR_NUMBER -c -b "No symbol info files (JSON) were modified after restoring issued groups from \`origin/${ENVIRONMENT}\` branch"
+            gh pr close $PR_NUMBER --delete-branch
+            exit 0
+        fi
+        msg=$(echo -e "Symbol info wasn't updated for next groups due to issues: \n\`\`\`\n$(arr2str '\n' ${GROUP_ERR_VALIDATION[@]})\n\`\`\`")
+        gh pr review $PR_NUMBER -c -b "$msg"
+    fi
 
     echo ready to merge
 
