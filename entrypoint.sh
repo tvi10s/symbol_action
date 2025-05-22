@@ -1,44 +1,45 @@
 #!/bin/bash
-set -x
+
+GITHUB_USER=${GITHUB_USER:-"updater-bot"}
+GITHUB_USER_EMAIL=${GITHUB_USER_EMAIL:-"updater-bot@fastmail.us"}
+BRANCH_RESTORE=${BRANCH_RESTORE:-"restore_"}
+
+
+git config user.name $GITHUB_USER
+git config user.email $GITHUB_USER_EMAIL
 
 # check command
-if [[ -z "$(echo 'UPLOAD VALIDATE CHECK' | grep -w "$CMD")" ]]; then
+if [[ -z "$(echo 'UPLOAD VALIDATE CHECK RESTORE' | grep -w "$CMD")" ]]
+then
     echo "ERROR: Wrong command received: '$CMD'"
     exit 1
 fi
 
-# determine environment
+# check ENVIRONMENT value
 if [ "${CMD}" == 'VALIDATE' ]; then
-    ENVIRONMENT=${GITHUB_BASE_REF}
+    ENVIRONMENT="$GITHUB_BASE_REF"
 else # 'CHECK' and 'UPLOAD' commands uses the same way to detect environment
-    ENVIRONMENT=${GITHUB_REF##*/}
+    ENVIRONMENT="${GITHUB_REF##*/}"
 fi
-# check environment
-if [[ "${ENVIRONMENT}" != "production" && "${ENVIRONMENT}" != "staging" ]]; then
-    echo "ERROR: Wrong environment: '${ENVIRONMENT}'. It must be 'production' or 'staging'"
+if [[ -z "$(echo 'production staging' | grep -w "$ENVIRONMENT")" ]]; then
+    echo "ERROR: Wrong environment: '$ENVIRONMENT'. It must be 'production' or 'staging'"
     exit 1
 fi
 
-# make necessary auth stuff for 'CHECK' and 'VALIDATE' commands
 if [ "${CMD}" != 'UPLOAD' ]; then
-    # check if GITHUB_TOKEN and GITHUB_TOKEN are set
-    if [[ -z "${GITHUB_TOKEN}" ]]; then
-        echo "ERROR: GITHUB_TOKEN is not set"
-        exit 1
+    # we don't login in UPLOAD CMD because we don't use GH API at all in this CMD
+    if [ "${ENVIRONMENT}" == "staging" ]; then
+        GH_TOKEN="${GITHUB_TOKEN_STAGING}"
+    elif [ "${ENVIRONMENT}" == "production" ]; then
+        GH_TOKEN="${GITHUB_TOKEN}"
+    else
+        GH_TOKEN="error"
     fi
-    if [[ -z "${GITHUB_TOKEN_STAGING}" ]]; then
-        echo "ERROR: GITHUB_TOKEN_STAGING is not set"
-        exit 1
-    fi
-    if [[ "${ENVIRONMENT}" == "staging" ]]; then
-        # change GITHUB_TOKEN in staging environment
-        export GITHUB_TOKEN="${GITHUB_TOKEN_STAGING}"
-    fi
-    git config user.name updater-bot
-    git config user.email updater-bot@tradingview.com
-    # make sure that the token is valid
-    if ! echo "${GITHUB_TOKEN}" | GITHUB_TOKEN="" gh auth login --with-token > /dev/null 2>&1; then
-        echo "Authorization error, update GITHUB_TOKEN"
+    export GITHUB_TOKEN=""
+    echo $GH_TOKEN | gh auth login --with-token
+    if [ $? -ne 0 ]
+    then
+        echo "Authorizaton error, update GITHUB_TOKEN for ${ENVIRONMENT} environment"
         exit 1
     fi
 fi
@@ -53,12 +54,15 @@ function cleanup {
 }
 
 function arr2str {
-    # join array to string with decimeter
+    # join array to string with delimeter
     # example:
     # arr=(1 2 3)
     # arr2str , ${arr[@]} => 1,2,3
     local IFS="$1"
     shift
+    if [[ "$IFS" == '\n' ]]; then
+        IFS=$'\n'
+    fi
     echo "$*";
 }
 
@@ -88,13 +92,15 @@ if [ ${CMD} == 'UPLOAD' ]; then
     for F in $(ls symbols); do
         FINAL_NAME=${INTEGRATION_NAME}/$(basename "$F")
         echo uploading symbols/$F to $S3_BUCKET_SYMBOLS/$ENVIRONMENT/$FINAL_NAME
+        set -e
         aws s3 cp "symbols/$F" "$S3_BUCKET_SYMBOLS/$ENVIRONMENT/$FINAL_NAME" --no-progress
+        set +e
     done
     exit 0
 fi
 
 if [ ${CMD} == 'VALIDATE' ]; then
-   echo validate symbol info
+    echo validate symbol info
     PR_NUMBER=$(jq --raw-output .pull_request.number "$GITHUB_EVENT_PATH")
     git fetch origin --depth=1 > /dev/null 2>&1
 
@@ -137,7 +143,7 @@ if [ ${CMD} == 'VALIDATE' ]; then
         echo No symbol info files were modified
         gh pr review $PR_NUMBER -c -b "No symbol info files (JSON) were modified"
         git checkout $GITHUB_HEAD_REF
-        gh pr close $PR_NUMBER --delete-branch
+        gh pr close $PR_NUMBER
         exit 0
     fi
 
@@ -152,12 +158,10 @@ if [ ${CMD} == 'VALIDATE' ]; then
     git checkout -b old origin/$ENVIRONMENT
     for F in "${MODIFIED[@]}"; do cp "$F" "$F.old"; done
     git checkout $GITHUB_HEAD_REF
-
     # download inspect tool
     get_inspect
 
     # check files
-
     arraylength=${#MODIFIED[@]}
     for ((i = 0; i < ${arraylength}; i++)); do
         MODIFIED[i]=$(echo ${MODIFIED[$i]} | cut -c3- | cut -f1 -d".")
@@ -171,6 +175,11 @@ if [ ${CMD} == 'VALIDATE' ]; then
     FULL_REPORT=$(cat full_report.txt)
     gh pr review $PR_NUMBER -c -b "$FULL_REPORT"
 
+    # if branch for manual restore -- only validate SI w/o roll back
+    if echo "$GITHUB_HEAD_REF" | grep "$BRANCH_RESTORE"; then
+        echo "it's branch for manual check & merging/cancelling changes. No need to roll out invalid SI"
+        exit 1
+    fi
     GROUP_ERR_VALIDATION_STR=$(grep FAIL full_report.txt | cut -f3 -d'*' | uniq)
     readarray -t GROUP_ERR_VALIDATION <<< $GROUP_ERR_VALIDATION_STR
     for err_group in ${GROUP_ERR_VALIDATION[@]}; do
@@ -181,14 +190,15 @@ if [ ${CMD} == 'VALIDATE' ]; then
     if [[ $err_group_changed -gt 0 ]]; then
         # we restored groups with issue, so we need to push them to branch
         # before push we need to check changes between source and target branch
-         git add '*.json'
-        git commit -m "automatic restore old version for groups with issues: $(arr2str , ${GROUP_ERR_VALIDATION[@]})"
+        # if finally there is no changes between source and target branch --> close this PR
+        git add '*.json'
+        git commit -m "automatic restore old version for issued groups: $(arr2str , ${GROUP_ERR_VALIDATION[@]})"
         git push
         MODIFIED=($(git diff --name-only origin/$ENVIRONMENT | grep ".json$"))
         if [[ -z "$MODIFIED" ]]; then
-            echo "No symbol info files were modified after restoring groups with issues from 'origin/${ENVIRONMENT}' branch"
+            echo "No symbol info files were modified after restoring issued groups from 'origin/${ENVIRONMENT}' branch"
             gh pr review $PR_NUMBER -c -b "No symbol info files (JSON) were modified after restoring issued groups from \`origin/${ENVIRONMENT}\` branch"
-            gh pr close $PR_NUMBER --delete-branch
+            gh pr close $PR_NUMBER
             exit 0
         fi
         msg=$(echo -e "Symbol info wasn't updated for next groups due to issues: \n\`\`\`\n$(arr2str '\n' ${GROUP_ERR_VALIDATION[@]})\n\`\`\`")
@@ -198,7 +208,7 @@ if [ ${CMD} == 'VALIDATE' ]; then
     echo ready to merge
 
     # merge PR
-    gh pr merge $PR_NUMBER --merge --delete-branch
+    gh pr merge $PR_NUMBER --merge
 
     exit 0 # pr merge can fail in case of data conflicts, but it is not fail of verification
 fi
@@ -208,11 +218,18 @@ if [ ${CMD} == 'CHECK' ]; then
     git checkout "${ENVIRONMENT}"
     git fetch origin --depth=1 > /dev/null 2>&1
 
-    PR_PENDING=$(gh pr list --base="${ENVIRONMENT}" --state=open | wc -l)
+    PR_PENDING=$(gh pr list --base="${ENVIRONMENT}" --state=open --author="${GITHUB_USER}" | wc -l)
     if (( PR_PENDING > 0 )); then
-        echo "There are some (${PR_PENDING}) opened pending pull requests. Can not create new PR."
+        echo "There is/are ${PR_PENDING} pending pull request(s). Can not create new PR."
         exit 1
     fi
+
+    # remove all feature branches because from DF-4040 we don't remove last feature branch
+    git ls-remote --heads origin \
+        | awk '{print $2}' \
+        | grep "^refs/heads/${ENVIRONMENT}-" \
+        | sed 's|refs/heads/||' \
+        | xargs -I {} git push origin --delete {}
 
     BRANCH="${EVENT_ID}"
     git checkout -b "${BRANCH}"
@@ -322,4 +339,69 @@ if [ ${CMD} == 'CHECK' ]; then
         exit 1
     fi
     exit 0
+fi
+
+
+if [ ${CMD} == 'RESTORE' ]; then
+    # here we restore issued groups from last MR
+    # 0. made validation for inputs: filter groups
+    GROUP=${GROUP:-all}
+    GROUP=$(echo "$GROUP" | tr -d '[:space:]')
+
+    if [[ "$GROUP" != "all" ]]; then
+        readarray -t GROUP < <(tr ',' '\n' <<< "$GROUP")
+        ROLLBACK_GROUP=()
+        for name in ${GROUP[@]}; do
+            if [[ -f "$GITHUB_WORKSPACE/symbols/$name.json" ]]; then
+                ROLLBACK_GROUP+=("$name")
+            else
+                echo "Unknown group $name received"
+            fi
+        done
+    else
+        readarray -t ROLLBACK_GROUP < <(ls symbols | sed 's/\.json$//')
+    fi
+    ROLLBACK_GROUP="${ROLLBACK_GROUP[*]}"
+    echo "Requested groups for restoring: $ROLLBACK_GROUP"
+    if [[ ${#ROLLBACK_GROUP[@]} -eq 0 ]]; then
+        echo "ERROR: no valid group names to restore"
+        exit 1
+    fi
+
+    # 1. get last MR number and hash
+    latest_pr=$(gh pr list --base="${ENVIRONMENT}"  --json number --state merged --state closed --limit 1 -q '.[0].number')
+
+    # 2. get rolled back groups from latest PR
+    gh pr view "$latest_pr" --json commits > commits.json
+    commits_len=$(jq '.commits | length' commits.json)
+    if [[ "$commits_len" -ne 2 ]]; then
+        echo "ERROR: last MR should contain 2 commits"
+        exit 1
+    fi
+    COMMIT1=$(jq -r '.commits[0].oid' commits.json)
+    COMMIT2=$(jq -r '.commits[-1].oid' commits.json)
+
+    # for each rolled back group
+    git pull --all
+    readarray -t changed_files < <(git diff --name-only "$COMMIT2"^ "$COMMIT2")
+    for file in ${changed_files[@]}; do
+        # 3. create new branch
+        # 4. revert changes fo rolled
+        # 5. push to branch
+        # 6. create MR
+        group=$(basename -s .json "$file")
+        if [[ -z "$(echo $ROLLBACK_GROUP | grep -w "$group")" ]]; then
+            echo "Group '$file' has an error, but it hasn't been requested to be restored"
+            continue
+        fi
+        branch_name="${BRANCH_RESTORE}${latest_pr}_${group}_$(date -u +"%Y%m%dT%H%M%S")"
+        git checkout -b "$branch_name" "$ENVIRONMENT"
+        git checkout "$COMMIT1" -- "$GITHUB_WORKSPACE/$file"
+        git add "$GITHUB_WORKSPACE/$file" && git commit -m "restore $group from $latest_pr"
+        git push --set-upstream origin "$branch_name"
+        tmp="Restored ${group} from ${latest_pr} PR"
+        gh pr create --title "$tmp" --body "$tmp" \
+         --base "${ENVIRONMENT}" \
+         --head "${branch_name}"
+    done
 fi
