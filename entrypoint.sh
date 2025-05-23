@@ -2,7 +2,7 @@
 
 GITHUB_USER=${GITHUB_USER:-"updater-bot"}
 GITHUB_USER_EMAIL=${GITHUB_USER_EMAIL:-"updater-bot@fastmail.us"}
-BRANCH_RESTORE="manual" # TODO: оставить так или какой-то шаблон тут зафигачить для regex?
+BRANCH_RESTORE=${BRANCH_RESTORE:-"restore_"}
 
 
 git config user.name $GITHUB_USER
@@ -176,9 +176,10 @@ if [ ${CMD} == 'VALIDATE' ]; then
     FULL_REPORT=$(cat full_report.txt)
     gh pr review $PR_NUMBER -c -b "$FULL_REPORT"
 
-    if [[ "$GITHUB_REF" != "BRANCH_RESTORE" ]]; then # TODO: проверить по REGEX
-        echo "it's branch for manual check & merging/cancelling changes"
-        gh pr review $PR_NUMBER -c -b "No" # TODO: составь текст
+    # if branch for manual restore -- only validate SI w/o roll back
+    if echo "$GITHUB_REF" | grep "$BRANCH_RESTORE";
+        echo "it's branch for manual check & merging/cancelling changes. No need to roll out invalid SI"
+        gh pr review $PR_NUMBER -c -b "it's branch for manual check & merging/cancelling changes.\nInvalid SI hasn't been rolled back."
         exit 1
     fi
     GROUP_ERR_VALIDATION_STR=$(grep FAIL full_report.txt | cut -f3 -d'*' | uniq)
@@ -338,23 +339,56 @@ fi
 
 if [ ${CMD} == 'RESTORE' ]; then
     # here we restore issued groups from last MR
-    GROUPS=${GROUPS:-all}
+    # 0. made validation for inputs: filter groups
+    GROUP=${GROUP:-all}
+    GROUP=$(echo "$GROUP" | tr -d '[:space:]')
 
-    # TODO:
-    # 0. made validation for inputs
+    if [[ "$GROUP" != "all" ]]; then
+        readarray -t GROUP < <(tr ',' '\n' <<< "$GROUP")
+        ROLLBACK_GROUP=()
+        for name in ${GROUP[@]}; do
+            if [[ -f "$GITHUB_ACTION_PATH/symbols/$name.json" ]]; then
+                ROLLBACK_GROUP+=("$name")
+            else
+                echo "Unknown group $name received"
+            fi
+        done
+    else
+        readarray -t ROLLBACK_GROUP < <(ls symbols | sed 's/\.json$//')
+    fi
+    ROLLBACK_GROUP="${ROLLBACK_GROUP[*]}"
+    echo "Groups for restoring: $ROLLBACK_GROUP"
+
     # 1. get last MR number and hash
-    latest_pr=$(gh pr list --base="${ENVIRONMENT}" --author="${GITHUB_USER}" -R "tradingview-integrations/${UPSTREAM}" --json number,headRefName,headRepositoryOwner,headRepository --state merged --state closed --limit 1)
-    # 2. restore branch or get groups from this SHA
-    gh pr view 42 --json commits -q '.commits[-1].oid'
-    git fetch origin
-    git checkout -b "$branch_name" "$last_commit_sha"
-    # 3. revert changes or get input from first commit
-    # TODO:
-    # 4. create branch with template name push it
-    git push origin "$branch_name"
-    # 5. create MR
-    gh pr create --title "Automatic symbol info update" \
-    --base "${ENVIRONMENT}" \
-    --body "This is an automated update from the updater-bot" \
-    --head "${BRANCH}"
+    latest_pr=$(gh pr list --base="${ENVIRONMENT}" --author="${GITHUB_USER}" -R "tradingview-integrations/${UPSTREAM}" --json number --state merged --state closed --limit 1 -q '.[0].number')
+
+    # 2. get rolled back groups from latest PR
+    gh pr view "$latest_pr" -R "tradingview-integrations/${UPSTREAM}" --json commits > commits.json
+    commits_len=$(jq '.commits | length' output.json)
+    if [[ "$commits_len" -ne 2 ]]; then
+        echo "ERROR: last MR should contain 2 commits"
+        exit 1
+    fi
+    COMMIT1=$(jq '.commits[0].oid' commits.json)
+    COMMIT2=$(jq '.commits[-1].oid' commits.json)
+
+    # for each rolled back group
+    readarray -t changed_files < <(git diff --name-only "$COMMIT2"^ "$COMMIT2")
+    for file in ${changed_files[@]}; do
+        # 3. create new branch
+        # 4. revert changes fo rolled
+        # 5. push to branch
+        # 6. create MR
+        if [[ -z "$(echo $ROLLBACK_GROUP | grep -w "$file")"]]; then
+            echo "Group '$file' has an error, but it hasn't been requested to be restored"
+            continue
+        fi
+        branch_name="${BRANCH_RESTORE}_${latest_pr}_${file%.json}_$(date -u +"%Y%m%dT%H%M%S")"
+        git checkout -b "$branch_name" "$ENVIRONMENT"
+        git checkout "$COMMIT1" -- "$GITHUB_ACTION_PATH/symbols/$file.json"
+        git push --set-upstream origin "$branch_name"
+        gh pr create --title "Restore ${file%.json} from ${latest_pr} PR" \
+         --base "${ENVIRONMENT}" \
+         --head "${branch_name}"
+    done
 fi
