@@ -218,7 +218,7 @@ if [ ${CMD} == 'CHECK' ]; then
     git checkout "${ENVIRONMENT}"
     git fetch origin --depth=1 > /dev/null 2>&1
 
-    PR_PENDING=$(gh pr list --base="${ENVIRONMENT}" --state=open --author="${GITHUB_USER}" | wc -l)
+    PR_PENDING=$(gh pr list --base="${ENVIRONMENT}" --state=open | wc -l)
     if (( PR_PENDING > 0 )); then
         echo "There is/are ${PR_PENDING} pending pull request(s). Can not create new PR."
         exit 1
