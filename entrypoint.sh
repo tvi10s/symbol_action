@@ -28,15 +28,19 @@ fi
 
 if [ "${CMD}" != 'UPLOAD' ]; then
     # we don't login in UPLOAD CMD because we don't use GH API at all in this CMD
-    if [ "${ENVIRONMENT}" == "staging" ]; then
-        GH_TOKEN="${GITHUB_TOKEN_STAGING}"
-    elif [ "${ENVIRONMENT}" == "production" ]; then
-        GH_TOKEN="${GITHUB_TOKEN}"
-    else
-        GH_TOKEN="error"
+    # check if GITHUB_TOKEN and GITHUB_TOKEN are set
+    if [[ -z "${GITHUB_TOKEN}" ]]; then
+        echo "ERROR: GITHUB_TOKEN is not set"
+        exit 1
     fi
-    export GITHUB_TOKEN=""
-    echo $GH_TOKEN | gh auth login --with-token
+    if [[ -z "${GITHUB_TOKEN_STAGING}" ]]; then
+        echo "ERROR: GITHUB_TOKEN_STAGING is not set"
+        exit 1
+    fi
+    if [[ "${ENVIRONMENT}" == "staging" ]]; then
+        # change GITHUB_TOKEN in staging environment
+        export GITHUB_TOKEN="${GITHUB_TOKEN_STAGING}"
+    gh auth login --with-token
     if [ $? -ne 0 ]
     then
         echo "Authorizaton error, update GITHUB_TOKEN for ${ENVIRONMENT} environment"
