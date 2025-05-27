@@ -9,8 +9,7 @@ git config user.name $GITHUB_USER
 git config user.email $GITHUB_USER_EMAIL
 
 # check command
-if [[ -z "$(echo 'UPLOAD VALIDATE CHECK RESTORE' | grep -w "$CMD")" ]]
-then
+if [[ -z "$(echo 'UPLOAD VALIDATE CHECK RESTORE' | grep -w "$CMD")" ]]; then
     echo "ERROR: Wrong command received: '$CMD'"
     exit 1
 fi
@@ -39,10 +38,13 @@ if [ "${CMD}" != 'UPLOAD' ]; then
     fi
     if [[ "${ENVIRONMENT}" == "staging" ]]; then
         # change GITHUB_TOKEN in staging environment
-        export GITHUB_TOKEN="${GITHUB_TOKEN_STAGING}"
-    gh auth login --with-token
-    if [ $? -ne 0 ]
-    then
+        GH_TOKEN="${GITHUB_TOKEN_STAGING}"
+    else
+        GH_TOKEN="$GITHUB_TOKEN"
+    fi
+    export GITHUB_TOKEN=""
+    echo $GH_TOKEN | gh auth login --with-token
+    if [ $? -ne 0 ]; then
         echo "Authorizaton error, update GITHUB_TOKEN for ${ENVIRONMENT} environment"
         exit 1
     fi
