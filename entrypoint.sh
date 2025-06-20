@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -x
+
 GITHUB_USER=${GITHUB_USER:-"updater-bot"}
 GITHUB_USER_EMAIL=${GITHUB_USER_EMAIL:-"updater-bot@fastmail.us"}
 BRANCH_RESTORE=${BRANCH_RESTORE:-"restore_"}
