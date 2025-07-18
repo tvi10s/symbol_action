@@ -216,7 +216,7 @@ if [ ${CMD} == 'VALIDATE' ]; then
     echo ready to merge
 
     # merge PR
-    gh pr merge $PR_NUMBER --merge
+    gh pr merge $PR_NUMBER --merge --admin # use --admin to fix https://github.com/cli/cli/issues/8092 
 
     exit 0 # pr merge can fail in case of data conflicts, but it is not fail of verification
 fi
