@@ -181,6 +181,7 @@ if [ ${CMD} == 'VALIDATE' ]; then
     if [[ $? -ne 0 && ! -f full_report.txt ]]; then
         # we can't add 'set -e' because inspect with validation issue returns non 0 exit code
         echo "inspect launch error ^^, exiting"
+        gh pr review $PR_NUMBER -c -b "inspect launch error, see logs"
         exit 1
     fi
     # we don't have to check again because the dynamic parameters are similar to the ./inspect call above
