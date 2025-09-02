@@ -178,6 +178,12 @@ if [ ${CMD} == 'VALIDATE' ]; then
     MODIFIED_STR=$(arr2str , ${MODIFIED[@]})
     echo "Checking ${MODIFIED_STR} groups"
     ./inspect symfile --groups="${MODIFIED_STR}" --log-file=stdout --report-file=full_report.txt --report-format=github $INSPECT_ARGS
+    if [[ $? -ne 0 && ! -f full_report.txt ]]; then
+        # we can't add 'set -e' because inspect with validation issue returns non 0 exit code
+        echo "inspect launch error ^^, exiting"
+        exit 1
+    fi
+    # we don't have to check again because the dynamic parameters are similar to the ./inspect call above
     ./inspect symfile diff --groups="${MODIFIED_STR}" --log-file=stdout $INSPECT_ARGS
 
     FULL_REPORT=$(cat full_report.txt)
@@ -216,7 +222,7 @@ if [ ${CMD} == 'VALIDATE' ]; then
     echo ready to merge
 
     # merge PR
-    gh pr merge $PR_NUMBER --merge --admin # use --admin to fix https://github.com/cli/cli/issues/8092 
+    gh pr merge $PR_NUMBER --merge --admin # use --admin to fix https://github.com/cli/cli/issues/8092
 
     exit 0 # pr merge can fail in case of data conflicts, but it is not fail of verification
 fi
