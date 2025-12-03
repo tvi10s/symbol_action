@@ -72,17 +72,23 @@ function arr2str {
     echo "$*";
 }
 
+function read_file {
+    if [[ -f $1 ]]; then
+        cat $1 
+    fi
+}
+
 function get_inspect {
     # download inspect tool and its parameters
     # it should be called in fetched repository to get correct inspect arguments
+    INSPECT_VERSION=$(read_file "./config/inspect_version")
+    INSPECT_VERSION=${INSPECT_VERSION:-"inspect-github-$ENVIRONMENT"}
     set -e
-    aws s3 cp "${S3_BUCKET_INSPECT}/inspect-github-${ENVIRONMENT}" ./inspect --no-progress && chmod +x ./inspect
+    aws s3 cp "${S3_BUCKET_INSPECT}/${INSPECT_VERSION}" ./inspect --no-progress && chmod +x ./inspect
     echo inspect info: $(./inspect version)
     set +e
-    INSPECT_ARGS=""  # default, but can be rewrite by file in repo
-    INSPECT_ARGS_FILE_PATH="./config/inspect_args"
-    if [[ -f $INSPECT_ARGS_FILE_PATH ]]; then
-        INSPECT_ARGS=$(cat $INSPECT_ARGS_FILE_PATH) > /dev/null 2>&1
+    INSPECT_ARGS=$(read_file "./config/inspect_args")
+    if [[ $INSPECT_ARGS != "" ]]; then
         echo "Args for inspect in repo: ${INSPECT_ARGS}"
     else
         echo "No inspect args in repo"
