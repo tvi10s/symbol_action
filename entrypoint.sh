@@ -1,4 +1,4 @@
-#!/bin/bash
+    #!/bin/bash
 
 GITHUB_USER=${GITHUB_USER:-"updater-bot"}
 GITHUB_USER_EMAIL=${GITHUB_USER_EMAIL:-"updater-bot@fastmail.us"}
@@ -269,9 +269,9 @@ if [ ${CMD} == 'CHECK' ]; then
         CONVERT=1
         if [[ "${ENVIRONMENT}" == "production" ]]
         then
-            currency_url='http://s3.amazonaws.com/tradingview-currencies/currencies.json'
+            currency_url='https://tradingview-currencies.tradingview.com/currencies.json'
         else
-            currency_url='http://s3.amazonaws.com/tradingview-currencies-staging/currencies.json'
+            currency_url='https://tradingview-currencies-staging.xstaging.tv/currencies.json'
         fi
         curl --compressed "${currency_url}" | jq '.[] | select(."cmc-id" != "" and ."cmc-id" != null) | {"cmc-id":."cmc-id", "id":."id"}' \
         | jq . -s > currencies.json
